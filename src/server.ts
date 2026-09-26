@@ -7,12 +7,13 @@ async function startServer() {
   try {
     await initDatabase();
 
-    app.listen(PORT, () => {
+    const port = Number(PORT);
+    app.listen(port, '0.0.0.0', () => {
       console.log(`===============================================`);
       console.log(` DecodeNow Dynamic QR Backend is running!`);
-      console.log(` Port:    http://localhost:${PORT}`);
-      console.log(` Health:  http://localhost:${PORT}/api/health`);
-      console.log(` Base:    ${process.env.BASE_URL || `http://localhost:${PORT}`}`);
+      console.log(` Port:    http://localhost:${port}`);
+      console.log(` Health:  http://localhost:${port}/api/health`);
+      console.log(` Base:    ${process.env.BASE_URL || `http://localhost:${port}`}`);
       console.log(`===============================================`);
     });
   } catch (error) {

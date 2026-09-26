@@ -18,13 +18,20 @@ if (process.env.DATABASE_URL && process.env.DATABASE_URL.trim() !== '') {
     process.env.DATABASE_URL.includes('supabase.co') ||
     process.env.DATABASE_URL.includes('pooler.supabase.com');
 
-  pool = new Pool({
+  const pgPool = new Pool({
     connectionString: process.env.DATABASE_URL,
     ssl: isRemote ? { rejectUnauthorized: false } : undefined,
     max: 10,
     idleTimeoutMillis: 30000,
     connectionTimeoutMillis: 5000,
   });
+
+  // Handle idle client connection resets gracefully (common with Supabase connection poolers)
+  pgPool.on('error', (err) => {
+    console.warn('[DB Pool] Non-fatal idle client error (connection reset):', err.message);
+  });
+
+  pool = pgPool;
 } else {
   // Graceful in-memory PostgreSQL engine for local development & offline testing
   try {
