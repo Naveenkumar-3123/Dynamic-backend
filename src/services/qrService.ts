@@ -9,6 +9,8 @@ export interface DynamicQRRecord {
   destinationUrl: string;
   scanCount: number;
   isActive: boolean;
+  isExpired?: boolean;
+  expiresAt?: string | null;
   createdAt: string;
   updatedAt: string;
   dynamicUrl: string;
@@ -21,12 +23,14 @@ export interface CreateQRResult {
   destinationUrl: string;
   dynamicUrl: string;
   secretKey: string;
+  expiresAt?: string | null;
 }
 
 export type RedirectResult =
   | { status: 'ACTIVE'; destinationUrl: string }
   | { status: 'NOT_FOUND' }
-  | { status: 'DISABLED' };
+  | { status: 'DISABLED' }
+  | { status: 'EXPIRED' };
 
 function getBaseUrl(): string {
   if (process.env.BASE_URL && !process.env.BASE_URL.includes('localhost')) {
@@ -51,12 +55,15 @@ function generateSecretKey(): string {
 }
 
 function mapRowToRecord(row: any, includeSecret = false): DynamicQRRecord {
+  const isExpired = row.expires_at ? new Date(row.expires_at).getTime() <= Date.now() : false;
   const record: DynamicQRRecord = {
     id: row.id,
     shortCode: row.short_code,
     destinationUrl: row.destination_url,
     scanCount: Number(row.scan_count || 0),
     isActive: Boolean(row.is_active),
+    isExpired,
+    expiresAt: row.expires_at ? (row.expires_at instanceof Date ? row.expires_at.toISOString() : String(row.expires_at)) : null,
     createdAt: row.created_at instanceof Date ? row.created_at.toISOString() : String(row.created_at),
     updatedAt: row.updated_at instanceof Date ? row.updated_at.toISOString() : String(row.updated_at),
     dynamicUrl: `${getBaseUrl()}/q/${row.short_code}`,
@@ -73,10 +80,21 @@ function mapRowToRecord(row: any, includeSecret = false): DynamicQRRecord {
  * Creates a new dynamic QR entry.
  * Generates an unguessable 48-char secretKey for owner authorization.
  */
-export async function createDynamicQR(destinationUrl: string): Promise<CreateQRResult> {
+export async function createDynamicQR(
+  destinationUrl: string,
+  expiresAt?: string | null
+): Promise<CreateQRResult> {
   const cleanUrl = sanitizeUrl(destinationUrl);
   if (!isValidUrl(cleanUrl)) {
     throw new Error('Invalid destination URL. Only public http:// and https:// URLs are allowed.');
+  }
+
+  let validExpiresAt: string | null = null;
+  if (expiresAt) {
+    const d = new Date(expiresAt);
+    if (!isNaN(d.getTime())) {
+      validExpiresAt = d.toISOString();
+    }
   }
 
   const id = crypto.randomUUID();
@@ -90,11 +108,11 @@ export async function createDynamicQR(destinationUrl: string): Promise<CreateQRR
     try {
       const sql = `
         INSERT INTO dynamic_qrs (
-          id, short_code, destination_url, secret_key, scan_count, is_active, created_at, updated_at
-        ) VALUES ($1, $2, $3, $4, 0, TRUE, NOW(), NOW())
+          id, short_code, destination_url, secret_key, scan_count, is_active, created_at, updated_at, expires_at
+        ) VALUES ($1, $2, $3, $4, 0, TRUE, NOW(), NOW(), $5)
         RETURNING *
       `;
-      const result = await query(sql, [id, shortCode, cleanUrl, secretKey]);
+      const result = await query(sql, [id, shortCode, cleanUrl, secretKey, validExpiresAt]);
       const row = result.rows[0];
 
       return {
@@ -103,6 +121,7 @@ export async function createDynamicQR(destinationUrl: string): Promise<CreateQRR
         destinationUrl: row.destination_url,
         dynamicUrl: `${getBaseUrl()}/q/${row.short_code}`,
         secretKey: row.secret_key || secretKey,
+        expiresAt: row.expires_at ? (row.expires_at instanceof Date ? row.expires_at.toISOString() : String(row.expires_at)) : null,
       };
     } catch (err: any) {
       if (err.code === '23505' || String(err.message).includes('unique')) {
@@ -123,7 +142,7 @@ export async function getByShortCode(shortCode: string): Promise<DynamicQRRecord
   if (!shortCode || shortCode.length > 20) return null;
 
   const sql = `
-    SELECT id, short_code, destination_url, scan_count, is_active, created_at, updated_at
+    SELECT id, short_code, destination_url, scan_count, is_active, created_at, updated_at, expires_at
     FROM dynamic_qrs
     WHERE short_code = $1
     LIMIT 1
@@ -170,7 +189,8 @@ async function verifyOwnership(shortCode: string, providedSecret?: string): Prom
 export async function updateDestinationUrl(
   shortCode: string,
   newDestinationUrl: string,
-  secretKey?: string
+  secretKey?: string,
+  expiresAt?: string | null
 ): Promise<{ success: boolean; record?: DynamicQRRecord; reason?: 'NOT_FOUND' | 'UNAUTHORIZED' | 'INVALID_URL' }> {
   if (!shortCode || shortCode.length > 20) {
     return { success: false, reason: 'NOT_FOUND' };
@@ -186,13 +206,27 @@ export async function updateDestinationUrl(
     return { success: false, reason: 'UNAUTHORIZED' };
   }
 
-  const sql = `
+  let validExpiresAt: string | null = null;
+  if (expiresAt !== undefined && expiresAt !== null) {
+    const d = new Date(expiresAt);
+    if (!isNaN(d.getTime())) {
+      validExpiresAt = d.toISOString();
+    }
+  }
+
+  const sql = expiresAt !== undefined ? `
+    UPDATE dynamic_qrs
+    SET destination_url = $1, updated_at = NOW(), expires_at = $3
+    WHERE short_code = $2
+    RETURNING *
+  ` : `
     UPDATE dynamic_qrs
     SET destination_url = $1, updated_at = NOW()
     WHERE short_code = $2
     RETURNING *
   `;
-  const result = await query(sql, [cleanUrl, shortCode]);
+  const params = expiresAt !== undefined ? [cleanUrl, shortCode, validExpiresAt] : [cleanUrl, shortCode];
+  const result = await query(sql, params);
   if (!result.rows || result.rows.length === 0) {
     return { success: false, reason: 'NOT_FOUND' };
   }
@@ -240,7 +274,7 @@ export async function handleRedirect(shortCode: string): Promise<RedirectResult>
   }
 
   const sql = `
-    SELECT destination_url, is_active
+    SELECT destination_url, is_active, expires_at
     FROM dynamic_qrs
     WHERE short_code = $1
     LIMIT 1
@@ -255,6 +289,10 @@ export async function handleRedirect(shortCode: string): Promise<RedirectResult>
 
   if (!record.is_active) {
     return { status: 'DISABLED' };
+  }
+
+  if (record.expires_at && new Date(record.expires_at).getTime() <= Date.now()) {
+    return { status: 'EXPIRED' };
   }
 
   // Atomic non-blocking scan counter update in PostgreSQL.

@@ -12,8 +12,9 @@ CREATE TABLE IF NOT EXISTS dynamic_qrs (
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
--- Backward compatibility: add secret_key column if migrating existing table
+-- Backward compatibility: add secret_key and expires_at columns if migrating existing table
 ALTER TABLE dynamic_qrs ADD COLUMN IF NOT EXISTS secret_key VARCHAR(64);
+ALTER TABLE dynamic_qrs ADD COLUMN IF NOT EXISTS expires_at TIMESTAMPTZ NULL;
 
 -- Fast lookup index for redirects & code verification
 CREATE UNIQUE INDEX IF NOT EXISTS idx_dynamic_qrs_short_code

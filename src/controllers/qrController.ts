@@ -28,7 +28,7 @@ export async function createQR(
   next: NextFunction
 ): Promise<void> {
   try {
-    const { destinationUrl } = req.body;
+    const { destinationUrl, expiresAt } = req.body;
 
     if (!destinationUrl || typeof destinationUrl !== 'string') {
       res.status(400).json({
@@ -41,7 +41,7 @@ export async function createQR(
       return;
     }
 
-    const created = await createDynamicQR(destinationUrl);
+    const created = await createDynamicQR(destinationUrl, expiresAt);
 
     res.status(201).json({
       success: true,
@@ -110,7 +110,7 @@ export async function updateQR(
 ): Promise<void> {
   try {
     const { shortCode } = req.params;
-    const { destinationUrl } = req.body;
+    const { destinationUrl, expiresAt } = req.body;
     const secretKey = extractSecretKey(req);
 
     if (!destinationUrl || typeof destinationUrl !== 'string') {
@@ -124,7 +124,7 @@ export async function updateQR(
       return;
     }
 
-    const result = await updateDestinationUrl(shortCode, destinationUrl, secretKey);
+    const result = await updateDestinationUrl(shortCode, destinationUrl, secretKey, expiresAt);
 
     if (result.reason === 'UNAUTHORIZED') {
       res.status(403).json({
@@ -266,6 +266,32 @@ export async function redirectQR(
           <div class="card">
             <h1>QR Code Disabled</h1>
             <p>This Dynamic QR code has been disabled by its owner.</p>
+          </div>
+        </body>
+        </html>
+      `);
+      return;
+    }
+
+    if (result.status === 'EXPIRED') {
+      res.status(410).send(`
+        <!DOCTYPE html>
+        <html lang="en">
+        <head>
+          <meta charset="UTF-8">
+          <meta name="viewport" content="width=device-width, initial-scale=1.0">
+          <title>DecodeNow - QR Expired</title>
+          <style>
+            body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; display: flex; align-items: center; justify-content: center; height: 100vh; margin: 0; background: #F8F9FA; color: #222; text-align: center; }
+            .card { background: white; padding: 2.5rem; border-radius: 1rem; box-shadow: 0 4px 20px rgba(0,0,0,0.08); max-width: 420px; margin: 1rem; }
+            h1 { font-size: 1.5rem; margin-bottom: 0.5rem; color: #d32f2f; }
+            p { color: #666; line-height: 1.5; }
+          </style>
+        </head>
+        <body>
+          <div class="card">
+            <h1>QR Code Expired</h1>
+            <p>This Dynamic QR code reached its expiration date and is no longer active.</p>
           </div>
         </body>
         </html>
