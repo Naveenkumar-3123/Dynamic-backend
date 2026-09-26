@@ -29,8 +29,21 @@ export type RedirectResult =
   | { status: 'DISABLED' };
 
 function getBaseUrl(): string {
-  const url = process.env.BASE_URL || 'http://localhost:3000';
-  return url.endsWith('/') ? url.slice(0, -1) : url;
+  if (process.env.BASE_URL && !process.env.BASE_URL.includes('localhost')) {
+    const url = process.env.BASE_URL;
+    return url.endsWith('/') ? url.slice(0, -1) : url;
+  }
+  if (process.env.VERCEL_PROJECT_PRODUCTION_URL) {
+    return `https://${process.env.VERCEL_PROJECT_PRODUCTION_URL}`;
+  }
+  if (process.env.VERCEL_URL) {
+    return `https://${process.env.VERCEL_URL}`;
+  }
+  if (process.env.BASE_URL) {
+    const url = process.env.BASE_URL;
+    return url.endsWith('/') ? url.slice(0, -1) : url;
+  }
+  return 'https://dynamic-backend-red.vercel.app';
 }
 
 function generateSecretKey(): string {
