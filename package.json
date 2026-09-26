@@ -1,0 +1,38 @@
+{
+  "name": "decodenow-dynamic-qr-backend",
+  "version": "1.0.0",
+  "description": "DecodeNow Dynamic QR Code Backend & Redirect Engine",
+  "main": "dist/server.js",
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/server.js",
+    "dev": "tsx watch src/server.ts",
+    "test": "tsx test/localTest.ts",
+    "test:supabase": "tsx test/testSupabaseConnection.ts"
+  },
+  "dependencies": {
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.7",
+    "express": "^4.21.2",
+    "pg": "^8.13.3",
+    "pg-mem": "^3.0.4"
+  },
+  "devDependencies": {
+    "@types/cors": "^2.8.17",
+    "@types/express": "^4.17.21",
+    "@types/node": "^22.13.8",
+    "@types/pg": "^8.11.11",
+    "tsx": "^4.19.3",
+    "typescript": "^5.7.3"
+  },
+  "keywords": [
+    "decodenow",
+    "dynamic-qr",
+    "express",
+    "typescript",
+    "supabase",
+    "vercel"
+  ],
+  "author": "DecodeNow",
+  "license": "ISC"
+}
