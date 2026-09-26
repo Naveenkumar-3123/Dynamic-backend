@@ -7,6 +7,21 @@ import {
   handleRedirect,
 } from '../services/qrService';
 
+function extractSecretKey(req: Request): string | undefined {
+  const authHeader = req.headers['authorization'];
+  if (authHeader && authHeader.startsWith('Bearer ')) {
+    return authHeader.substring(7).trim();
+  }
+  const customHeader = req.headers['x-secret-key'];
+  if (typeof customHeader === 'string' && customHeader.trim() !== '') {
+    return customHeader.trim();
+  }
+  if (req.body && typeof req.body.secretKey === 'string') {
+    return req.body.secretKey.trim();
+  }
+  return undefined;
+}
+
 export async function createQR(
   req: Request,
   res: Response,
@@ -18,7 +33,10 @@ export async function createQR(
     if (!destinationUrl || typeof destinationUrl !== 'string') {
       res.status(400).json({
         success: false,
-        message: 'Field "destinationUrl" is required and must be a valid URL string.',
+        error: {
+          code: 'INVALID_URL',
+          message: 'Field "destinationUrl" is required and must be a valid URL string.',
+        },
       });
       return;
     }
@@ -31,7 +49,13 @@ export async function createQR(
     });
   } catch (err: any) {
     if (err.message && err.message.includes('Invalid destination URL')) {
-      res.status(400).json({ success: false, message: err.message });
+      res.status(400).json({
+        success: false,
+        error: {
+          code: 'INVALID_URL',
+          message: err.message,
+        },
+      });
       return;
     }
     next(err);
@@ -46,8 +70,14 @@ export async function getQR(
   try {
     const { shortCode } = req.params;
 
-    if (!shortCode) {
-      res.status(400).json({ success: false, message: 'Short code is required.' });
+    if (!shortCode || shortCode.length > 20) {
+      res.status(400).json({
+        success: false,
+        error: {
+          code: 'INVALID_SHORT_CODE',
+          message: 'Short code is invalid or missing.',
+        },
+      });
       return;
     }
 
@@ -56,7 +86,10 @@ export async function getQR(
     if (!record) {
       res.status(404).json({
         success: false,
-        message: `Dynamic QR code "${shortCode}" was not found.`,
+        error: {
+          code: 'NOT_FOUND',
+          message: `Dynamic QR code "${shortCode}" was not found.`,
+        },
       });
       return;
     }
@@ -78,34 +111,59 @@ export async function updateQR(
   try {
     const { shortCode } = req.params;
     const { destinationUrl } = req.body;
+    const secretKey = extractSecretKey(req);
 
     if (!destinationUrl || typeof destinationUrl !== 'string') {
       res.status(400).json({
         success: false,
-        message: 'Field "destinationUrl" is required and must be a valid URL string.',
+        error: {
+          code: 'INVALID_URL',
+          message: 'Field "destinationUrl" is required and must be a valid URL string.',
+        },
       });
       return;
     }
 
-    const updated = await updateDestinationUrl(shortCode, destinationUrl);
+    const result = await updateDestinationUrl(shortCode, destinationUrl, secretKey);
 
-    if (!updated) {
+    if (result.reason === 'UNAUTHORIZED') {
+      res.status(403).json({
+        success: false,
+        error: {
+          code: 'UNAUTHORIZED',
+          message: 'Unauthorized. The provided secret key does not match this Dynamic QR code.',
+        },
+      });
+      return;
+    }
+
+    if (result.reason === 'NOT_FOUND' || !result.record) {
       res.status(404).json({
         success: false,
-        message: `Dynamic QR code "${shortCode}" was not found.`,
+        error: {
+          code: 'NOT_FOUND',
+          message: `Dynamic QR code "${shortCode}" was not found.`,
+        },
+      });
+      return;
+    }
+
+    if (result.reason === 'INVALID_URL') {
+      res.status(400).json({
+        success: false,
+        error: {
+          code: 'INVALID_URL',
+          message: 'Invalid destination URL. Only public http:// and https:// URLs are allowed.',
+        },
       });
       return;
     }
 
     res.status(200).json({
       success: true,
-      data: updated,
+      data: result.record,
     });
-  } catch (err: any) {
-    if (err.message && err.message.includes('Invalid destination URL')) {
-      res.status(400).json({ success: false, message: err.message });
-      return;
-    }
+  } catch (err) {
     next(err);
   }
 }
@@ -117,13 +175,28 @@ export async function disableQR(
 ): Promise<void> {
   try {
     const { shortCode } = req.params;
+    const secretKey = extractSecretKey(req);
 
-    const disabled = await disableDynamicQR(shortCode);
+    const result = await disableDynamicQR(shortCode, secretKey);
 
-    if (!disabled) {
+    if (result.reason === 'UNAUTHORIZED') {
+      res.status(403).json({
+        success: false,
+        error: {
+          code: 'UNAUTHORIZED',
+          message: 'Unauthorized. The provided secret key does not match this Dynamic QR code.',
+        },
+      });
+      return;
+    }
+
+    if (result.reason === 'NOT_FOUND' || !result.record) {
       res.status(404).json({
         success: false,
-        message: `Dynamic QR code "${shortCode}" was not found.`,
+        error: {
+          code: 'NOT_FOUND',
+          message: `Dynamic QR code "${shortCode}" was not found.`,
+        },
       });
       return;
     }
@@ -131,7 +204,7 @@ export async function disableQR(
     res.status(200).json({
       success: true,
       message: 'Dynamic QR code disabled successfully.',
-      data: disabled,
+      data: result.record,
     });
   } catch (err) {
     next(err);
@@ -200,7 +273,7 @@ export async function redirectQR(
       return;
     }
 
-    // HTTP 302 Found redirect
+    // HTTP 302 Found redirect strictly using verified destination from database
     res.redirect(302, result.destinationUrl);
   } catch (err) {
     next(err);
@@ -208,6 +281,7 @@ export async function redirectQR(
 }
 
 function escapeHtml(text: string): string {
+  if (!text) return '';
   return text
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')

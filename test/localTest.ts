@@ -10,7 +10,8 @@ function makeRequest(
   method: string,
   urlPath: string,
   body?: any,
-  followRedirect: boolean = false
+  followRedirect: boolean = false,
+  extraHeaders?: Record<string, string>
 ): Promise<{ status: number; headers: http.IncomingHttpHeaders; body: any }> {
   return new Promise((resolve, reject) => {
     const url = new URL(urlPath, BASE);
@@ -21,6 +22,7 @@ function makeRequest(
       path: url.pathname + url.search,
       headers: {
         'Content-Type': 'application/json',
+        ...(extraHeaders || {}),
       },
     };
 
@@ -82,9 +84,9 @@ async function runTests() {
       throw new Error(`Create QR failed: ${JSON.stringify(createRes.body)}`);
     }
 
-    const { shortCode, dynamicUrl, destinationUrl } = createRes.body.data;
-    if (!shortCode || !dynamicUrl || destinationUrl !== 'https://example.com') {
-      throw new Error('Create QR returned invalid data structure');
+    const { shortCode, dynamicUrl, destinationUrl, secretKey } = createRes.body.data;
+    if (!shortCode || !dynamicUrl || destinationUrl !== 'https://example.com' || !secretKey) {
+      throw new Error('Create QR returned invalid data structure or missing secretKey');
     }
     console.log(`✓ Created Dynamic QR: shortCode=${shortCode}, dynamicUrl=${dynamicUrl}`);
 
@@ -109,11 +111,25 @@ async function runTests() {
     }
     console.log(`✓ Scan count increment verified: ${getRes.body.data.scanCount}`);
 
-    // 7. Update destination
-    console.log(`\n[7/11] Updating destination to https://newwebsite.com ...`);
-    const updateRes = await makeRequest('PUT', `/api/qr/${shortCode}`, {
-      destinationUrl: 'https://newwebsite.com',
+    // 6b. Verify unauthorized update without secret key is rejected
+    console.log(`\n[6b] Verifying unauthorized update attempt without secret key is rejected ...`);
+    const unauthorizedRes = await makeRequest('PUT', `/api/qr/${shortCode}`, {
+      destinationUrl: 'https://hacked.com',
     });
+    if (unauthorizedRes.status !== 403) {
+      throw new Error(`Expected 403 Forbidden for unauthorized update, got ${unauthorizedRes.status}`);
+    }
+    console.log('✓ Unauthorized modification rejected with HTTP 403');
+
+    // 7. Update destination
+    console.log(`\n[7/11] Updating destination to https://newwebsite.com with X-Secret-Key ...`);
+    const updateRes = await makeRequest(
+      'PUT',
+      `/api/qr/${shortCode}`,
+      { destinationUrl: 'https://newwebsite.com' },
+      false,
+      { 'X-Secret-Key': secretKey }
+    );
     console.log('Update response:', updateRes.body);
     if (updateRes.status !== 200 || updateRes.body.data.destinationUrl !== 'https://newwebsite.com') {
       throw new Error(`Update destination failed: ${JSON.stringify(updateRes.body)}`);
@@ -133,8 +149,14 @@ async function runTests() {
     console.log('✓ Redirect 302 to updated destination (https://newwebsite.com) confirmed');
 
     // 10 & 11. Disable the QR and confirm it no longer redirects
-    console.log(`\n[10/11 & 11/11] Testing DELETE /api/qr/${shortCode} and checking disabled redirect ...`);
-    const deleteRes = await makeRequest('DELETE', `/api/qr/${shortCode}`);
+    console.log(`\n[10/11 & 11/11] Testing DELETE /api/qr/${shortCode} with X-Secret-Key and checking disabled redirect ...`);
+    const deleteRes = await makeRequest(
+      'DELETE',
+      `/api/qr/${shortCode}`,
+      undefined,
+      false,
+      { 'X-Secret-Key': secretKey }
+    );
     console.log('Disable response:', deleteRes.body);
     if (deleteRes.status !== 200 || deleteRes.body.data.isActive !== false) {
       throw new Error(`Disable QR failed: ${JSON.stringify(deleteRes.body)}`);
